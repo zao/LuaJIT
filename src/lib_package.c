@@ -16,6 +16,7 @@
 #include "lj_obj.h"
 #include "lj_err.h"
 #include "lj_lib.h"
+#include "lj_utf8win.h"
 
 /* ------------------------------------------------------------------------ */
 
@@ -80,15 +81,18 @@ BOOL WINAPI GetModuleHandleExA(DWORD, LPCSTR, HMODULE*);
 
 static void setprogdir(lua_State *L)
 {
-  char buff[MAX_PATH + 1];
-  char *lb;
-  DWORD nsize = sizeof(buff);
-  DWORD n = GetModuleFileNameA(NULL, buff, nsize);
-  if (n == 0 || n == nsize || (lb = strrchr(buff, '\\')) == NULL) {
+  enum { N = 1<<16 };
+  wchar_t buff[N];
+  wchar_t *lb;
+  DWORD nsize = N;
+  DWORD n = GetModuleFileNameW(NULL, buff, nsize);
+  if (n == 0 || n == nsize || (lb = wcsrchr(buff, L'\\')) == NULL) {
     luaL_error(L, "unable to get ModuleFileName");
   } else {
-    *lb = '\0';
-    luaL_gsub(L, lua_tostring(L, -1), LUA_EXECDIR, buff);
+    *lb = L'\0';
+    char nbuff[N];
+    _lua_narrowtobuffer(buff, nbuff, N);
+    luaL_gsub(L, lua_tostring(L, -1), LUA_EXECDIR, nbuff);
     lua_remove(L, -2);  /* remove original string */
   }
 }
@@ -111,7 +115,9 @@ static void ll_unloadlib(void *lib)
 
 static void *ll_load(lua_State *L, const char *path, int gl)
 {
-  HINSTANCE lib = LoadLibraryA(path);
+  wchar_t pathBuf[1<<16];
+  _lua_widentobuffer(path, pathBuf, _countof(pathBuf));
+  HINSTANCE lib = LoadLibraryW(pathBuf);
   if (lib == NULL) pusherror(L);
   UNUSED(gl);
   return lib;
@@ -267,7 +273,7 @@ static int lj_cf_package_unloadlib(lua_State *L)
 
 static int readable(const char *filename)
 {
-  FILE *f = fopen(filename, "r");  /* try to open file */
+  FILE *f = _lua_fopen(filename, "r");  /* try to open file */
   if (f == NULL) return 0;  /* open failed */
   fclose(f);
   return 1;
@@ -535,17 +541,20 @@ static void setpath(lua_State *L, const char *fieldname, const char *envname,
 #if LJ_TARGET_CONSOLE
   const char *path = NULL;
   UNUSED(envname);
+  return;
 #else
-  const char *path = getenv(envname);
+  char const *path = _lua_getenvcopy(envname);
 #endif
   if (path == NULL || noenv) {
     lua_pushstring(L, def);
   } else {
-    path = luaL_gsub(L, path, LUA_PATHSEP LUA_PATHSEP,
+    char const* lpath = luaL_gsub(L, path, LUA_PATHSEP LUA_PATHSEP,
 			      LUA_PATHSEP AUXMARK LUA_PATHSEP);
-    luaL_gsub(L, path, AUXMARK, def);
+
+    luaL_gsub(L, lpath, AUXMARK, def);
     lua_remove(L, -2);
   }
+  _lua_getenvfree(path);
   setprogdir(L);
   lua_setfield(L, -2, fieldname);
 }

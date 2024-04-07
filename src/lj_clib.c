@@ -16,6 +16,7 @@
 #include "lj_cconv.h"
 #include "lj_cdata.h"
 #include "lj_clib.h"
+#include "lj_utf8win.h"
 
 /* -- OS-specific functions ----------------------------------------------- */
 
@@ -200,7 +201,13 @@ static const char *clib_extname(lua_State *L, const char *name)
 static void *clib_loadlib(lua_State *L, const char *name, int global)
 {
   DWORD oldwerr = GetLastError();
-  void *h = (void *)LoadLibraryA(clib_extname(L, name));
+
+  enum {NameSize = 1<<16};
+  wchar_t namebuf[NameSize];
+  void *h = NULL;
+  if (_lua_widentobuffer(clib_extname(L, name), namebuf, NameSize)) {
+    h = (void *)LoadLibraryW(namebuf);
+  }
   if (!h) clib_error(L, "cannot load module " LUA_QS ": %s", name);
   SetLastError(oldwerr);
   UNUSED(global);
